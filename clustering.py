@@ -1,13 +1,30 @@
 import numpy as np
 import random
-from dataclasses import  dataclass
-# from binarytree import Node
-MAPSIZE = [-5000, 5000]
+from dataclasses import dataclass, field
+import matplotlib.pyplot as plt
+import math
 
+MAPSIZE = [-5000, 5000]
+SECTORSIZE = 100
 # Red = 0
 # Green = 1
 # Blue = 2
 # Purple = 3
+
+
+
+class Sector:
+    def __init__(self, row, col):
+        self.row = row
+        self.col = col
+        self.count = 0
+        self.points = np.empty((0, 3))
+
+    def addPoint(self, point):
+        self.points = np.append(self.points, [point], axis=0)
+        self.count+=1
+
+
 
 @dataclass(order=True)
 class Node:
@@ -21,6 +38,7 @@ class KDTree:
     def __init__(self, trainingSet):
         self.trainingSet = trainingSet
         self.tree = self.buildTree()
+        self.knearests = None
 
     def buildTree(self):
         self.trainingSet = self.trainingSet[self.trainingSet[:,0].argsort()]
@@ -113,6 +131,7 @@ class KDTree:
         dist = getDistance(point, node.value)
         if dist < shortest:
             shortest = dist
+            self.knearests = node.value
 
         if node.right != None and node.left != None:
             if not depth % 2:
@@ -178,16 +197,16 @@ def generatePoint(flag):
         return point
     else:
         if flag == 0:
-            point = np.random.randint(MAPSIZE[0], 500, size=(2))
+            point = np.random.randint(MAPSIZE[0], 500, size=(2), dtype=np.int16)
             return point
         if flag == 1:
-            point = np.array((random.randint(-500,MAPSIZE[1]), random.randint(MAPSIZE[0],500)))
+            point = np.array((random.randint(-500,MAPSIZE[1]), random.randint(MAPSIZE[0],500)), dtype=np.int16)
             return point
         if flag == 2:
-            point = np.array((random.randint(MAPSIZE[0], 500), random.randint(-500, MAPSIZE[1])))
+            point = np.array((random.randint(MAPSIZE[0], 500), random.randint(-500, MAPSIZE[1])), dtype=np.int16)
             return point
         if flag == 3:
-            point = np.random.randint(-500, MAPSIZE[1], size=(2))
+            point = np.random.randint(-500, MAPSIZE[1], size=(2), dtype=np.int16)
             return point
 
 
@@ -237,28 +256,99 @@ def checkMajority(nearests):
     return max(count, key=count.get)
 
 
+def createSectors():
+    sectors = []
+    for r in range(int(MAPSIZE[1]*2 / SECTORSIZE)):
+        sectors.append([])
+        for c in range(int(MAPSIZE[1]*2 / SECTORSIZE)):
+            sectors[r].append(Sector(r,c))
 
+    return sectors
+
+def getPosOfPoint(point):
+    r = int((MAPSIZE[1] + point[0]) / SECTORSIZE)
+    c = int((MAPSIZE[1] + point[1]) / SECTORSIZE)
+    return [r,c]
+
+def addPointToSector(sectors, point):
+    r,c = getPosOfPoint(point)
+    sectors[r][c].addPoint(point)
+
+
+def findKnearestInSectors(sectors, point, k, size):
+    magic = int( math.sqrt(MAPSIZE[1]*2 / size))
+
+    dist = kdtree.findNearestKD(point, kdtree.tree, 0, 15000)
+    distSector = int(dist / SECTORSIZE) + magic*k
+    rPoint, cPoint = getPosOfPoint(point)
+
+    r1 = 0 if rPoint - distSector <= 0 else rPoint - distSector
+    r2 = int(MAPSIZE[1]*2 / SECTORSIZE) - 1 if rPoint + distSector >= int(MAPSIZE[1]*2 / SECTORSIZE) else rPoint + distSector
+
+    c1 = 0 if cPoint - distSector <= 0 else cPoint - distSector
+    c2 = int(MAPSIZE[1] * 2 / SECTORSIZE) - 1 if cPoint + distSector >= int(MAPSIZE[1] * 2 / SECTORSIZE) else cPoint + distSector
+
+    susedia = []
+    for r in range(r1,r2,1):
+        for c in range(c1,c2,1):
+            if sectors[r][c].count == 0:
+                continue
+            for s in sectors[r][c].points:
+                d = getDistance(point, s)
+
+                if len(susedia) < k:
+                    susedia.append([s, d])
+                    if len(susedia) == k:
+                        susedia.sort(key=sortFunc)
+                    continue
+                elif d < susedia[-1][1]:
+                    susedia[k - 1] = [p, d]
+                    susedia.sort(key=sortFunc)
+
+
+    print(len(susedia))
+    return susedia
 
 
 if __name__ == "__main__":
     trainingSet = init()
-    k = 5
+    k = 15
+
+
+    sectors = createSectors()
+
+    for p in trainingSet:
+        addPointToSector(sectors, p)
+
 
 
     kdtree = KDTree(trainingSet)
 
 
-    for i in range(1):
+    for i in range(100):
         p = generatePoint(i % 4)
-        nearest = demoFindNearest(trainingSet,p , k)
-        print(nearest)
-        p = np.append(p, checkMajority(nearest))
-        # trainingSet = np.append(trainingSet, [p], axis=0)
-        a = kdtree.findNearestKD(p, kdtree.tree, 0, 15000)
-        print(f"__{a}")
+        susedia = findKnearestInSectors(sectors, p, k, i + 20)
+        p = np.append(p, checkMajority(susedia))
+        # print(f"{p}")
+        r, c = getPosOfPoint(p)
+        sectors[r][c].addPoint(p)
         kdtree.addNode(kdtree.tree, p, 0)
+        kdtree.trainingSet = np.append(kdtree.trainingSet, [p], axis=0)
 
-# print(trainingSet)
+
+
+# N = 50
+x = kdtree.trainingSet[...,0]
+y = kdtree.trainingSet[...,1]
+# y = np.random.rand(N)
+colors = kdtree.trainingSet[...,2]
+# area = (30 * np.random.rand(N))**2  # 0 to 15 point radii
+
+plt.scatter(x, y, s=5, c=colors)
+
+plt.show()
+
+
 
 # notes:
 # 100_000 /
