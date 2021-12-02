@@ -2,6 +2,7 @@ import numpy as np
 import random
 from dataclasses import dataclass, field
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 import math
 
 MAPSIZE = [-5000, 5000]
@@ -193,20 +194,20 @@ def init():
 def generatePoint(flag):
     r = random.randint(0,100)
     if not r:
-        point = np.random.randint(MAPSIZE[0], MAPSIZE[1], size=(2))
+        point = np.random.randint(MAPSIZE[0], MAPSIZE[1]-1, size=(2))
         return point
     else:
         if flag == 0:
             point = np.random.randint(MAPSIZE[0], 500, size=(2), dtype=np.int16)
             return point
         if flag == 1:
-            point = np.array((random.randint(-500,MAPSIZE[1]), random.randint(MAPSIZE[0],500)), dtype=np.int16)
+            point = np.array((random.randint(-500,MAPSIZE[1]-1), random.randint(MAPSIZE[0],500)), dtype=np.int16)
             return point
         if flag == 2:
-            point = np.array((random.randint(MAPSIZE[0], 500), random.randint(-500, MAPSIZE[1])), dtype=np.int16)
+            point = np.array((random.randint(MAPSIZE[0], 500), random.randint(-500, MAPSIZE[1]-1)), dtype=np.int16)
             return point
         if flag == 3:
-            point = np.random.randint(-500, MAPSIZE[1], size=(2), dtype=np.int16)
+            point = np.random.randint(-500, MAPSIZE[1]-1, size=(2), dtype=np.int16)
             return point
 
 
@@ -277,6 +278,8 @@ def addPointToSector(sectors, point):
 
 def findKnearestInSectors(sectors, point, k, size):
     magic = int( math.sqrt(MAPSIZE[1]*2 / size))
+    magic = magic if magic > 1 else 2
+
 
     dist = kdtree.findNearestKD(point, kdtree.tree, 0, 15000)
     distSector = int(dist / SECTORSIZE) + magic*k
@@ -302,17 +305,18 @@ def findKnearestInSectors(sectors, point, k, size):
                         susedia.sort(key=sortFunc)
                     continue
                 elif d < susedia[-1][1]:
-                    susedia[k - 1] = [p, d]
+                    susedia[k - 1] = [s, d]
                     susedia.sort(key=sortFunc)
 
+    if len(susedia) != k:
+        print(len(susedia))
 
-    print(len(susedia))
     return susedia
 
 
 if __name__ == "__main__":
     trainingSet = init()
-    k = 15
+    k = 3
 
 
     sectors = createSectors()
@@ -323,28 +327,41 @@ if __name__ == "__main__":
 
 
     kdtree = KDTree(trainingSet)
-
+    rangeN = 10000
 
     for i in range(100):
+        if i % 10 == 0:
+            print(f"{i}", end="")
+        elif i % 10 != 9:
+            print("-",end="")
+    print("100")
+
+    for i in range(rangeN):
         p = generatePoint(i % 4)
         susedia = findKnearestInSectors(sectors, p, k, i + 20)
         p = np.append(p, checkMajority(susedia))
         # print(f"{p}")
         r, c = getPosOfPoint(p)
-        sectors[r][c].addPoint(p)
+        try:
+            sectors[r][c].addPoint(p)
+        except:
+            print(r,c)
         kdtree.addNode(kdtree.tree, p, 0)
         kdtree.trainingSet = np.append(kdtree.trainingSet, [p], axis=0)
+
+        if i % int(rangeN / 100) == 0:
+            print("#",end="")
 
 
 
 # N = 50
 x = kdtree.trainingSet[...,0]
 y = kdtree.trainingSet[...,1]
-# y = np.random.rand(N)
 colors = kdtree.trainingSet[...,2]
-# area = (30 * np.random.rand(N))**2  # 0 to 15 point radii
 
-plt.scatter(x, y, s=5, c=colors)
+rgbp = ListedColormap(["red", "green", "blue", "purple"])
+
+plt.scatter(x, y, s=5, c=colors, cmap=rgbp)
 
 plt.show()
 
@@ -352,3 +369,5 @@ plt.show()
 
 # notes:
 # 100_000 /
+# nastavit lepsie magic number
+# vyriesit vyfarbovanie
