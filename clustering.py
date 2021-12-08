@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import math
+import threading
+import copy
 
 MAPSIZE = [-5000, 5000]
 SECTORSIZE = 100
@@ -189,26 +191,50 @@ def init():
                   [4500, 4400, 3], [4100, 3000, 3], [1800, 2400, 3], [2500, 3400, 3], [2000, 1400, 3]), dtype=np.int16)
     return trainingSet
 
-# flag: znacka farby 0-3 (R,G,B,P)
+# @param flag : znacka farby 0-3 (R,G,B,P)
 #TODO odstranit duplikacie
-def generatePoint(flag):
+def generatePoint(flag, points):
     r = random.randint(0,100)
-    if not r:
-        point = np.random.randint(MAPSIZE[0], MAPSIZE[1]-1, size=(2))
-        return point
-    else:
-        if flag == 0:
-            point = np.random.randint(MAPSIZE[0], 500, size=(2), dtype=np.int16)
-            return point
-        if flag == 1:
-            point = np.array((random.randint(-500,MAPSIZE[1]-1), random.randint(MAPSIZE[0],500)), dtype=np.int16)
-            return point
-        if flag == 2:
-            point = np.array((random.randint(MAPSIZE[0], 500), random.randint(-500, MAPSIZE[1]-1)), dtype=np.int16)
-            return point
-        if flag == 3:
-            point = np.random.randint(-500, MAPSIZE[1]-1, size=(2), dtype=np.int16)
-            return point
+    while True:
+        if not r:
+            point = np.array((int(random.random()*9999)-5000, int(random.random()*9999)-5000), dtype=np.int16)
+            if not any(np.equal(points, point).all(1)):
+                return point
+            continue
+        else:
+            rx = int(random.random()*5499)
+            ry = int(random.random()*5499)
+
+            if flag == 0:
+                point = np.array((rx - 5000, ry - 5000), dtype=np.int16)
+                if not any(np.equal(points, point).all(1)):
+                    return point
+                continue
+            if flag == 1:
+                point = np.array((rx - 500, ry - 5000), dtype=np.int16)
+                if not any(np.equal(points, point).all(1)):
+                    return point
+                continue
+            if flag == 2:
+                point = np.array((rx - 5000, ry - 500), dtype=np.int16)
+                if not any(np.equal(points, point).all(1)):
+                    return point
+                continue
+            if flag == 3:
+                point = np.array((rx - 500, ry - 500), dtype=np.int16)
+                if not any(np.equal(points, point).all(1)):
+                    return point
+            continue
+
+
+def createRandomPoints(size, al):
+    points = al[0]
+    # points = []
+    for i in range(size):
+        points = np.append(points, [generatePoint(i % 4, points)], axis=0)
+        # points.append(generatePoint(i % 4, points))
+    al[0] = points
+    return points
 
 
 def demoClasification(trainingSet, range):
@@ -243,6 +269,7 @@ def demoFindNearest(trainingSet, newPoint, k):
 def sortFunc(x):
     return x[1]
 
+# todo vyriesit ak sa rovnaju
 def checkMajority(nearests):
     count = {
         0: 0,
@@ -254,7 +281,16 @@ def checkMajority(nearests):
     for i in nearests:
         count[i[0][2]]+=1
 
-    return max(count, key=count.get)
+    maxx = max(count, key=count.get)
+    for i in count.keys():
+        if count[maxx] == count[i]:
+            for n in nearests:
+                if n[0][2] == maxx or n[0][2] == i:
+                    maxx = n[0][2]
+                    break
+
+
+    return maxx
 
 
 def createSectors():
@@ -276,13 +312,42 @@ def addPointToSector(sectors, point):
     sectors[r][c].addPoint(point)
 
 
-def findKnearestInSectors(sectors, point, k, size):
-    magic = int( math.sqrt(MAPSIZE[1]*2 / size))
-    magic = magic if magic > 1 else 2
+def findKnearestInSectors(sectors, point, k, size, kdtree):
+    kmagic = 1
+    if k >= 15:
+        if size < 3000:
+            kmagic = k
+        elif size < 10000:
+            kmagic = 7
+        else:
+            kmagic = 10
+
+    elif k >= 7:
+        if size < 4000:
+            kmagic = k
+        elif size < 8000:
+            kmagic = 4
+        else:
+            kmagic = 5
+
+    elif k >= 3:
+        kmagic = k
+
+
+    magic = int(math.sqrt(MAPSIZE[1] * 2 / size)) * kmagic
+    magic = magic if magic > 1 else  kmagic
+    susedia = []
 
 
     dist = kdtree.findNearestKD(point, kdtree.tree, 0, 15000)
-    distSector = int(dist / SECTORSIZE) + magic*k
+    susedia.append([kdtree.knearests, dist])
+
+    if k == 1:
+        return susedia
+
+    distSector = int(dist / SECTORSIZE) + magic  #malo v skorych fazach
+
+    # distSector = magic * k
     rPoint, cPoint = getPosOfPoint(point)
 
     r1 = 0 if rPoint - distSector <= 0 else rPoint - distSector
@@ -291,7 +356,7 @@ def findKnearestInSectors(sectors, point, k, size):
     c1 = 0 if cPoint - distSector <= 0 else cPoint - distSector
     c2 = int(MAPSIZE[1] * 2 / SECTORSIZE) - 1 if cPoint + distSector >= int(MAPSIZE[1] * 2 / SECTORSIZE) else cPoint + distSector
 
-    susedia = []
+
     for r in range(r1,r2,1):
         for c in range(c1,c2,1):
             if sectors[r][c].count == 0:
@@ -314,60 +379,118 @@ def findKnearestInSectors(sectors, point, k, size):
     return susedia
 
 
-if __name__ == "__main__":
-    trainingSet = init()
-    k = 3
+def clasify(point, k, kdtree, sectors, size):
+    susedia = findKnearestInSectors(sectors, point, k, size, kdtree) # todo zmenit size
+    newClass = checkMajority(susedia)
+    point = np.append(point, newClass)
+    r, c = getPosOfPoint(point)
+    try:
+        sectors[r][c].addPoint(point)
+    except:
+        print(r, c, "###########")
 
+    kdtree.addNode(kdtree.tree, point, 0)
+    kdtree.trainingSet = np.append(kdtree.trainingSet, [point], axis=0)
+    return newClass
 
-    sectors = createSectors()
-
+def fillSectors(sectors, trainingSet):
     for p in trainingSet:
         addPointToSector(sectors, p)
 
 
+def threadClasify(k, rangeN, points):
+    trainingSet = init()
+    sectors = createSectors()
+    fillSectors(sectors, trainingSet)
+    newkdtree = KDTree(trainingSet)
 
-    kdtree = KDTree(trainingSet)
-    rangeN = 10000
+    eqClassCount = 0
+    for i in range(rangeN):
+        p = points[i]
+        newClass = clasify(p, k, newkdtree, sectors, i+20)
 
+        if newClass == i % 4:
+            eqClassCount += 1
+
+        if i % int(rangeN / 100) == 0:
+            print(f"#", end="")
+
+    print(f"\nUspesnost pre k == {k}: {eqClassCount / rangeN * 100}%")
+
+    x = newkdtree.trainingSet[..., 0]
+    y = newkdtree.trainingSet[..., 1]
+    colors = newkdtree.trainingSet[..., 2]
+
+    # rgbp = ListedColormap(["red", "green", "blue", "purple"])
+    # plt.figure(figsize=(4, 4))
+    # plt.scatter(x, y, s=15, c=colors, cmap=rgbp)
+
+    return [x,y, colors]
+
+if __name__ == "__main__":
+
+    rangeN = 20000
+
+    points = np.empty((0, 2))
+    al = [points]
+    thset = threading.Thread(target=createRandomPoints, args=(rangeN, al))
+    thset.start()
+
+    print("1...Zvolenie si vlastneho k\n2...Testovanie na vsetkych k (1, 3, 7, 15)")
+    cmd = int(input())
+    if cmd == 1:
+        print("Zvol is hodnotu k:")
+        k = int(input())
+
+
+    thset.join()
+    points = al[0]
+
+    # nakreslenie mierky
     for i in range(100):
         if i % 10 == 0:
             print(f"{i}", end="")
         elif i % 10 != 9:
-            print("-",end="")
+            print("-", end="")
     print("100")
 
-    for i in range(rangeN):
-        p = generatePoint(i % 4)
-        susedia = findKnearestInSectors(sectors, p, k, i + 20)
-        p = np.append(p, checkMajority(susedia))
-        # print(f"{p}")
-        r, c = getPosOfPoint(p)
-        try:
-            sectors[r][c].addPoint(p)
-        except:
-            print(r,c)
-        kdtree.addNode(kdtree.tree, p, 0)
-        kdtree.trainingSet = np.append(kdtree.trainingSet, [p], axis=0)
-
-        if i % int(rangeN / 100) == 0:
-            print("#",end="")
+    if cmd == 1:
+        x1, y1, colors1 = threadClasify(k, rangeN, np.copy(points))
+        rgbp = ListedColormap(["red", "green", "blue", "purple"])
+        plt.figure(figsize=(4, 4))
+        plt.scatter(x1, y1, s=15, c=colors1, cmap=rgbp)
+        plt.show()
+    elif cmd == 2:
 
 
 
-# N = 50
-x = kdtree.trainingSet[...,0]
-y = kdtree.trainingSet[...,1]
-colors = kdtree.trainingSet[...,2]
 
-rgbp = ListedColormap(["red", "green", "blue", "purple"])
+        x1, y1, colors1 = threadClasify(1, rangeN, np.copy(points))
+        # x3, y3, colors3 = threadClasify(7, rangeN, np.copy(points))
+        # x4, y4, colors4 = threadClasify(15, rangeN, np.copy(points))
+        x2, y2, colors2 = threadClasify(3, rangeN, np.copy(points))
+        # threadClasify(7, rangeN, np.copy(points))
 
-plt.scatter(x, y, s=5, c=colors, cmap=rgbp)
+        rgbp = ListedColormap(["red", "green", "blue", "purple"])
+        plt.figure(figsize=(4, 4))
+        plt.scatter(x1, y1, s=15, c=colors1, cmap=rgbp)
 
-plt.show()
+        plt.figure(figsize=(4, 4))
+        plt.scatter(x2, y2, s=15, c=colors2, cmap=rgbp)
+        plt.show()
+
+        # plt.figure(figsize=(4, 4))
+        # plt.scatter(x3, y3, s=15, c=colors3, cmap=rgbp)
+        #
+        # plt.figure(figsize=(4, 4))
+        # plt.scatter(x4, y4, s=15, c=colors4, cmap=rgbp)
+
+
+
+
 
 
 
 # notes:
-# 100_000 /
 # nastavit lepsie magic number
-# vyriesit vyfarbovanie
+# niekde je chyba
